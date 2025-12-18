@@ -2,3 +2,4 @@
 *.log
 tests/fixtures/
 test_*.toml
+Justfile

@@ -74,9 +74,18 @@ impl TarFileSystem {
             }
         }
 
+        log::debug!(
+            "Raw entries before stripping: {:?}",
+            entries.keys().collect::<Vec<_>>()
+        );
+
         // Detect and strip common root directory
         let entries = Self::strip_root_directory(entries);
 
+        log::debug!(
+            "Final entries after stripping: {:?}",
+            entries.keys().collect::<Vec<_>>()
+        );
         log::debug!("Loaded {} entries from tar.gz", entries.len());
 
         Ok(TarFileSystem {
@@ -108,6 +117,12 @@ impl TarFileSystem {
             }
         }
 
+        log::debug!(
+            "Root detection: top_level_dirs={:?}, has_top_level_files={}",
+            top_level_dirs,
+            has_top_level_files
+        );
+
         // Only strip if:
         // 1. There's exactly one top-level directory
         // 2. There are no top-level files
@@ -115,7 +130,7 @@ impl TarFileSystem {
             let root_dir = top_level_dirs.iter().next().unwrap();
             let prefix = format!("{}/", root_dir);
 
-            log::debug!(
+            log::info!(
                 "Detected single root directory '{}', stripping it from paths",
                 root_dir
             );
@@ -125,18 +140,26 @@ impl TarFileSystem {
                 if let Some(stripped) = path.strip_prefix(&prefix) {
                     // Skip the root directory entry itself
                     if !stripped.is_empty() {
+                        log::debug!("Stripping '{}' -> '{}'", path, stripped);
                         new_entries.insert(stripped.to_string(), entry);
                     }
                 } else if path == *root_dir || path == prefix.trim_end_matches('/') {
                     // Skip the root directory entry
+                    log::debug!("Skipping root directory entry: '{}'", path);
                     continue;
                 } else {
                     // This shouldn't happen, but keep the entry just in case
+                    log::warn!("Path '{}' doesn't match expected pattern", path);
                     new_entries.insert(path, entry);
                 }
             }
             new_entries
         } else {
+            log::debug!(
+                "Not stripping root: found {} top-level dirs, has_top_level_files={}",
+                top_level_dirs.len(),
+                has_top_level_files
+            );
             // Multiple top-level directories or top-level files exist, don't strip
             entries
         }

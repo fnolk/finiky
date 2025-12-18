@@ -32,7 +32,9 @@ pub struct ProtocolConfig {
     #[serde(default)]
     pub boot_filename_legacy: Option<String>,
     #[serde(default)]
-    pub boot_filename_dhcp_boot: Option<String>,
+    pub boot_filename_dhcp_boot_legacy: Option<String>,
+    #[serde(default)]
+    pub boot_filename_dhcp_boot_efi: Option<String>,
     /// Force a specific protocol ("efi", "legacy", or "dhcp_boot") instead of auto-detection
     #[serde(default)]
     pub force_protocol: Option<String>,
@@ -62,7 +64,8 @@ impl Default for Config {
                     dhcp_boot: true,
                     boot_filename_efi: None,
                     boot_filename_legacy: None,
-                    boot_filename_dhcp_boot: None,
+                    boot_filename_dhcp_boot_legacy: None,
+                    boot_filename_dhcp_boot_efi: None,
                     force_protocol: None,
                 },
                 ip_pool_start: "192.168.1.100".to_string(),
@@ -131,7 +134,8 @@ legacy = true
 dhcp_boot = true
 boot_filename_efi = "custom_efi.efi"
 boot_filename_legacy = "custom_legacy.0"
-boot_filename_dhcp_boot = "custom_dhcp.0"
+boot_filename_dhcp_boot_legacy = "custom_dhcp_legacy.0"
+boot_filename_dhcp_boot_efi = "custom_dhcp_efi.efi"
 
 [tftp]
 port = 69
@@ -151,8 +155,12 @@ root = "./http"
             Some("custom_legacy.0".to_string())
         );
         assert_eq!(
-            config.dhcp.protocols.boot_filename_dhcp_boot,
-            Some("custom_dhcp.0".to_string())
+            config.dhcp.protocols.boot_filename_dhcp_boot_legacy,
+            Some("custom_dhcp_legacy.0".to_string())
+        );
+        assert_eq!(
+            config.dhcp.protocols.boot_filename_dhcp_boot_efi,
+            Some("custom_dhcp_efi.efi".to_string())
         );
     }
 
@@ -185,6 +193,7 @@ root = "./http"
         let config: Config = toml::from_str(config_str).unwrap();
         assert_eq!(config.dhcp.protocols.boot_filename_efi, None);
         assert_eq!(config.dhcp.protocols.boot_filename_legacy, None);
-        assert_eq!(config.dhcp.protocols.boot_filename_dhcp_boot, None);
+        assert_eq!(config.dhcp.protocols.boot_filename_dhcp_boot_legacy, None);
+        assert_eq!(config.dhcp.protocols.boot_filename_dhcp_boot_efi, None);
     }
 }

@@ -336,12 +336,13 @@ impl DhcpServer {
         let client_arch = request.get_client_arch();
 
         let protocol = ProtocolHandler::select_protocol(&config.protocols, client_arch)?;
-        let filename = ProtocolHandler::get_boot_filename(protocol, &config.protocols);
+        let filename = ProtocolHandler::get_boot_filename(protocol, &config.protocols, client_arch);
 
         log::info!(
-            "Selected protocol: {:?}, boot filename: {}",
+            "Selected protocol: {:?}, boot filename: {}, client arch: {:?}",
             protocol,
-            filename
+            filename,
+            client_arch
         );
         log::info!("Allocated IP: {} for client", client_ip);
 

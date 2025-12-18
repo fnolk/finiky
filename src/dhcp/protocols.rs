@@ -64,7 +64,11 @@ impl ProtocolHandler {
         }
     }
 
-    pub fn get_boot_filename(protocol: BootProtocol, config: &ProtocolConfig) -> String {
+    pub fn get_boot_filename(
+        protocol: BootProtocol,
+        config: &ProtocolConfig,
+        client_arch: Option<u16>,
+    ) -> String {
         match protocol {
             BootProtocol::Efi => config
                 .boot_filename_efi
@@ -74,10 +78,26 @@ impl ProtocolHandler {
                 .boot_filename_legacy
                 .clone()
                 .unwrap_or_else(|| "pxelinux.0".to_string()),
-            BootProtocol::DhcpBoot => config
-                .boot_filename_dhcp_boot
-                .clone()
-                .unwrap_or_else(|| "pxelinux.0".to_string()),
+            BootProtocol::DhcpBoot => {
+                // Determine if client is EFI or Legacy based on architecture option
+                let is_efi = if let Some(arch) = client_arch {
+                    matches!(arch, 6 | 7 | 9) // EFI x86_64, EFI BC, EFI x64
+                } else {
+                    false // Unknown architecture defaults to Legacy
+                };
+
+                if is_efi {
+                    config
+                        .boot_filename_dhcp_boot_efi
+                        .clone()
+                        .unwrap_or_else(|| "syslinux.efi".to_string())
+                } else {
+                    config
+                        .boot_filename_dhcp_boot_legacy
+                        .clone()
+                        .unwrap_or_else(|| "pxelinux.0".to_string())
+                }
+            }
         }
     }
 }
@@ -95,7 +115,8 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: None,
         };
 
@@ -117,16 +138,17 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: None,
         };
 
         assert_eq!(
-            ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config),
+            ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config, None),
             "bootx64.efi"
         );
         assert_eq!(
-            ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config),
+            ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config, None),
             "pxelinux.0"
         );
     }
@@ -139,21 +161,26 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: Some("custom_efi.efi".to_string()),
             boot_filename_legacy: Some("custom_legacy.0".to_string()),
-            boot_filename_dhcp_boot: Some("custom_dhcp.0".to_string()),
+            boot_filename_dhcp_boot_legacy: Some("custom_dhcp_legacy.0".to_string()),
+            boot_filename_dhcp_boot_efi: Some("custom_dhcp_efi.efi".to_string()),
             force_protocol: None,
         };
 
         assert_eq!(
-            ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config),
+            ProtocolHandler::get_boot_filename(BootProtocol::Efi, &config, None),
             "custom_efi.efi"
         );
         assert_eq!(
-            ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config),
+            ProtocolHandler::get_boot_filename(BootProtocol::Legacy, &config, None),
             "custom_legacy.0"
         );
         assert_eq!(
-            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config),
-            "custom_dhcp.0"
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(6)),
+            "custom_dhcp_efi.efi"
+        );
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(0)),
+            "custom_dhcp_legacy.0"
         );
     }
 
@@ -166,7 +193,8 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: Some("efi".to_string()),
         };
         // Should return EFI even if client requests Legacy (arch 0)
@@ -182,7 +210,8 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: Some("legacy".to_string()),
         };
         // Should return Legacy even if client requests EFI (arch 6)
@@ -198,7 +227,8 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: Some("dhcp_boot".to_string()),
         };
         assert_eq!(
@@ -213,9 +243,84 @@ mod tests {
             dhcp_boot: true,
             boot_filename_efi: None,
             boot_filename_legacy: None,
-            boot_filename_dhcp_boot: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
             force_protocol: Some("efi".to_string()),
         };
         assert_eq!(ProtocolHandler::select_protocol(&config, Some(0)), None);
+    }
+
+    #[test]
+    fn test_dhcp_boot_dual_architecture() {
+        let config = ProtocolConfig {
+            efi: true,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot_legacy: None,
+            boot_filename_dhcp_boot_efi: None,
+            force_protocol: None,
+        };
+
+        // Test EFI architectures (6, 7, 9)
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(6)),
+            "syslinux.efi"
+        );
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(7)),
+            "syslinux.efi"
+        );
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(9)),
+            "syslinux.efi"
+        );
+
+        // Test Legacy architectures (0, 1)
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(0)),
+            "pxelinux.0"
+        );
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(1)),
+            "pxelinux.0"
+        );
+
+        // Test unknown architecture (defaults to Legacy)
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, None),
+            "pxelinux.0"
+        );
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(99)),
+            "pxelinux.0"
+        );
+    }
+
+    #[test]
+    fn test_dhcp_boot_custom_filenames() {
+        let config = ProtocolConfig {
+            efi: true,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot_legacy: Some("custom_pxelinux.0".to_string()),
+            boot_filename_dhcp_boot_efi: Some("custom_syslinux.efi".to_string()),
+            force_protocol: None,
+        };
+
+        // Test custom filenames for EFI
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(6)),
+            "custom_syslinux.efi"
+        );
+
+        // Test custom filenames for Legacy
+        assert_eq!(
+            ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config, Some(0)),
+            "custom_pxelinux.0"
+        );
     }
 }

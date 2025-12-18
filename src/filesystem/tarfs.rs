@@ -74,11 +74,72 @@ impl TarFileSystem {
             }
         }
 
+        // Detect and strip common root directory
+        let entries = Self::strip_root_directory(entries);
+
         log::debug!("Loaded {} entries from tar.gz", entries.len());
 
         Ok(TarFileSystem {
             entries: Arc::new(entries),
         })
+    }
+
+    /// Detect if all entries are under a single root directory and strip it
+    fn strip_root_directory(entries: HashMap<String, TarEntry>) -> HashMap<String, TarEntry> {
+        if entries.is_empty() {
+            return entries;
+        }
+
+        // Find all top-level directories
+        let mut top_level_dirs = std::collections::HashSet::new();
+        let mut has_top_level_files = false;
+
+        for path in entries.keys() {
+            if let Some(first_component) = path.split('/').next() {
+                if first_component.is_empty() {
+                    continue;
+                }
+                // Check if this is a top-level file or directory
+                if path.contains('/') {
+                    top_level_dirs.insert(first_component.to_string());
+                } else {
+                    has_top_level_files = true;
+                }
+            }
+        }
+
+        // Only strip if:
+        // 1. There's exactly one top-level directory
+        // 2. There are no top-level files
+        if top_level_dirs.len() == 1 && !has_top_level_files {
+            let root_dir = top_level_dirs.iter().next().unwrap();
+            let prefix = format!("{}/", root_dir);
+
+            log::debug!(
+                "Detected single root directory '{}', stripping it from paths",
+                root_dir
+            );
+
+            let mut new_entries = HashMap::new();
+            for (path, entry) in entries {
+                if let Some(stripped) = path.strip_prefix(&prefix) {
+                    // Skip the root directory entry itself
+                    if !stripped.is_empty() {
+                        new_entries.insert(stripped.to_string(), entry);
+                    }
+                } else if path == *root_dir || path == prefix.trim_end_matches('/') {
+                    // Skip the root directory entry
+                    continue;
+                } else {
+                    // This shouldn't happen, but keep the entry just in case
+                    new_entries.insert(path, entry);
+                }
+            }
+            new_entries
+        } else {
+            // Multiple top-level directories or top-level files exist, don't strip
+            entries
+        }
     }
 
     fn normalize_path(&self, path: &str) -> String {
@@ -210,5 +271,70 @@ mod tests {
 
         let dir_entries = fs.list_dir("dir").await.unwrap();
         assert!(dir_entries.contains(&"file.txt".to_string()));
+    }
+
+    fn create_test_tar_with_root_dir(temp_dir: &TempDir) -> std::path::PathBuf {
+        let tar_path = temp_dir.path().join("test_with_root.tar.gz");
+        let file = File::create(&tar_path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+
+        // Create a tar with a single root directory
+        let mut header = tar::Header::new_gnu();
+        header.set_path("myapp/").unwrap();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_cksum();
+        tar.append(&header, &[][..]).unwrap();
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("myapp/config.txt").unwrap();
+        header.set_size(6);
+        header.set_cksum();
+        tar.append(&header, &b"config"[..]).unwrap();
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("myapp/subdir/").unwrap();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_cksum();
+        tar.append(&header, &[][..]).unwrap();
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path("myapp/subdir/file.txt").unwrap();
+        header.set_size(4);
+        header.set_cksum();
+        tar.append(&header, &b"data"[..]).unwrap();
+
+        let encoder = tar.into_inner().unwrap();
+        let _file = encoder.finish().unwrap();
+        tar_path
+    }
+
+    #[tokio::test]
+    async fn test_tar_strip_root_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let tar_file = create_test_tar_with_root_dir(&temp_dir);
+        let fs = TarFileSystem::new(&tar_file).unwrap();
+
+        // The root directory should be stripped, so we can access files directly
+        assert!(fs.exists("config.txt").await);
+        assert!(!fs.exists("myapp/config.txt").await);
+
+        let content = fs.read_file("config.txt").await.unwrap();
+        assert_eq!(content, b"config");
+
+        // Test subdirectory access
+        assert!(fs.exists("subdir/file.txt").await);
+        let content = fs.read_file("subdir/file.txt").await.unwrap();
+        assert_eq!(content, b"data");
+
+        // Test directory listing
+        let entries = fs.list_dir("").await.unwrap();
+        assert!(entries.contains(&"config.txt".to_string()));
+        assert!(entries.iter().any(|e| e.starts_with("subdir")));
+
+        let subdir_entries = fs.list_dir("subdir").await.unwrap();
+        assert!(subdir_entries.contains(&"file.txt".to_string()));
     }
 }

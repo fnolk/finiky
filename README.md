@@ -70,7 +70,7 @@ The configuration file supports the following options:
 ```toml
 [dhcp]
 port = 67
-interface = null  # Optional network interface name
+interface = "null"  # Optional network interface name
 ip_pool_start = "192.168.1.100"
 ip_pool_end = "192.168.1.200"
 subnet_mask = "255.255.255.0"

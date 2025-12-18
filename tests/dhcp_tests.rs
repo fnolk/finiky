@@ -17,6 +17,8 @@ fn test_dhcp_message_serialization() {
         siaddr: "0.0.0.0".parse().unwrap(),
         giaddr: "0.0.0.0".parse().unwrap(),
         chaddr: [0u8; 16],
+        sname: [0u8; 64],
+        file: [0u8; 128],
         options: vec![53, 1, 1, 255], // DHCP Discover
     };
 
@@ -42,6 +44,8 @@ fn test_dhcp_message_options() {
         siaddr: "0.0.0.0".parse().unwrap(),
         giaddr: "0.0.0.0".parse().unwrap(),
         chaddr: [0u8; 16],
+        sname: [0u8; 64],
+        file: [0u8; 128],
         options: vec![53, 1, 1, 93, 2, 0, 6, 255], // Message type + Client arch (EFI)
     };
 

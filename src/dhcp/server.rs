@@ -28,12 +28,14 @@ pub struct DhcpMessage {
     pub siaddr: Ipv4Addr,
     pub giaddr: Ipv4Addr,
     pub chaddr: [u8; 16],
+    pub sname: [u8; 64], // Server name
+    pub file: [u8; 128], // Boot file name
     pub options: Vec<u8>,
 }
 
 impl DhcpMessage {
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        if data.len() < 240 {
+        if data.len() < 236 {
             return Err("DHCP message too short".to_string());
         }
 
@@ -46,6 +48,13 @@ impl DhcpMessage {
         let mut chaddr = [0u8; 16];
         chaddr[..16].copy_from_slice(&data[28..44]);
 
+        let mut sname = [0u8; 64];
+        sname.copy_from_slice(&data[44..108]);
+
+        let mut file = [0u8; 128];
+        file.copy_from_slice(&data[108..236]);
+
+        // Skip magic cookie at 236-239 if present, options start at 240
         let options = if data.len() > 240 {
             data[240..].to_vec()
         } else {
@@ -65,12 +74,14 @@ impl DhcpMessage {
             giaddr,
             siaddr,
             chaddr,
+            sname,
+            file,
             options,
         })
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut data = vec![0u8; 240];
+        let mut data = vec![0u8; 236];
         data[0] = self.op;
         data[1] = self.htype;
         data[2] = self.hlen;
@@ -83,6 +94,10 @@ impl DhcpMessage {
         data[20..24].copy_from_slice(&self.siaddr.octets());
         data[24..28].copy_from_slice(&self.giaddr.octets());
         data[28..44].copy_from_slice(&self.chaddr);
+        data[44..108].copy_from_slice(&self.sname);
+        data[108..236].copy_from_slice(&self.file);
+        // Magic cookie
+        data.extend_from_slice(&[0x63, 0x82, 0x53, 0x63]);
         data.extend_from_slice(&self.options);
         data
     }
@@ -349,6 +364,12 @@ impl DhcpServer {
         // Determine response message type: Discover -> Offer (2), Request -> ACK (5)
         let response_msg_type = if msg_type == 1 { 2 } else { 5 };
 
+        // Prepare boot filename for the file field (max 128 bytes, null-terminated)
+        let mut file_field = [0u8; 128];
+        let filename_bytes = filename.as_bytes();
+        let copy_len = filename_bytes.len().min(127); // Leave room for null terminator
+        file_field[..copy_len].copy_from_slice(&filename_bytes[..copy_len]);
+
         let mut response = DhcpMessage {
             op: 2, // BOOTREPLY
             htype: request.htype,
@@ -362,6 +383,8 @@ impl DhcpServer {
             siaddr: config.next_server.parse().ok()?,
             giaddr: Ipv4Addr::UNSPECIFIED,
             chaddr: request.chaddr,
+            sname: [0u8; 64], // Server name (empty for now)
+            file: file_field, // Boot filename
             options: Vec::new(),
         };
 
@@ -394,6 +417,8 @@ mod tests {
         let msg = DhcpMessage::from_bytes(&data).unwrap();
         assert_eq!(msg.op, 1);
         assert_eq!(msg.xid, 0x12345678);
+        assert_eq!(msg.sname.len(), 64);
+        assert_eq!(msg.file.len(), 128);
     }
 
     #[test]

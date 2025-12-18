@@ -71,6 +71,18 @@ impl TftpPacket {
         packet
     }
 
+    pub fn build_oack(options: &HashMap<String, String>) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&6u16.to_be_bytes()); // OACK opcode = 6
+        for (key, value) in options {
+            packet.extend_from_slice(key.as_bytes());
+            packet.push(0);
+            packet.extend_from_slice(value.as_bytes());
+            packet.push(0);
+        }
+        packet
+    }
+
     pub fn extract_filename(&self) -> Option<String> {
         if matches!(
             self.opcode,
@@ -81,6 +93,53 @@ impl TftpPacket {
         } else {
             None
         }
+    }
+
+    pub fn extract_options(&self) -> HashMap<String, String> {
+        let mut options = HashMap::new();
+        if !matches!(
+            self.opcode,
+            TftpOpcode::ReadRequest | TftpOpcode::WriteRequest
+        ) {
+            return options;
+        }
+
+        // Skip filename and mode
+        let mut pos = 0;
+        for _ in 0..2 {
+            if let Some(null_pos) = self.data[pos..].iter().position(|&b| b == 0) {
+                pos += null_pos + 1;
+            } else {
+                return options;
+            }
+        }
+
+        // Parse options (key-value pairs separated by null bytes)
+        while pos < self.data.len() {
+            if let Some(null_pos) = self.data[pos..].iter().position(|&b| b == 0) {
+                if let Ok(key) = String::from_utf8(self.data[pos..pos + null_pos].to_vec()) {
+                    pos += null_pos + 1;
+                    if pos < self.data.len() {
+                        if let Some(null_pos2) = self.data[pos..].iter().position(|&b| b == 0) {
+                            if let Ok(value) =
+                                String::from_utf8(self.data[pos..pos + null_pos2].to_vec())
+                            {
+                                options.insert(key.to_lowercase(), value);
+                            }
+                            pos += null_pos2 + 1;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        options
     }
 
     #[allow(dead_code)]
@@ -129,11 +188,13 @@ impl TftpServer {
                                 active_transfers_clone.lock().await.insert(peer, tx);
 
                                 if let Some(filename) = packet.extract_filename() {
+                                    let options = packet.extract_options();
                                     log::info!("TFTP read request for: {} from {}", filename, peer);
                                     tokio::spawn(Self::handle_read_with_channel(
                                         socket_clone,
                                         peer,
                                         filename,
+                                        options,
                                         filesystem_clone,
                                         active_transfers_clone,
                                         rx,
@@ -187,6 +248,7 @@ impl TftpServer {
         socket: Arc<UdpSocket>,
         peer: SocketAddr,
         filename: String,
+        options: HashMap<String, String>,
         filesystem: Arc<dyn FileSystem>,
         active_transfers: Arc<tokio::sync::Mutex<HashMap<SocketAddr, mpsc::Sender<Vec<u8>>>>>,
         mut ack_rx: mpsc::Receiver<Vec<u8>>,
@@ -211,13 +273,77 @@ impl TftpServer {
             }
         };
 
+        // Handle options if present (RFC 2347)
+        let mut block_size = BLOCK_SIZE;
+        if !options.is_empty() {
+            let mut ack_options = HashMap::new();
+
+            // Handle blksize option
+            if let Some(blksize_str) = options.get("blksize") {
+                if let Ok(requested_size) = blksize_str.parse::<usize>() {
+                    // RFC 2348: blksize range is 8-65464 bytes
+                    if (8..=65464).contains(&requested_size) {
+                        block_size = requested_size;
+                        ack_options.insert("blksize".to_string(), blksize_str.clone());
+                    }
+                }
+            }
+
+            // Handle tsize option (RFC 2349)
+            if options.contains_key("tsize") {
+                ack_options.insert("tsize".to_string(), file_data.len().to_string());
+            }
+
+            // Send OACK
+            let oack = TftpPacket::build_oack(&ack_options);
+            if let Err(e) = socket.send_to(&oack, peer).await {
+                log::error!("Error sending OACK: {}", e);
+                return;
+            }
+
+            // Wait for ACK of block 0 (OACK acknowledgment)
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ack_rx.recv()).await {
+                Ok(Some(ack_data)) => {
+                    if ack_data.len() >= 4 {
+                        let ack_opcode = u16::from_be_bytes([ack_data[0], ack_data[1]]);
+                        let ack_block = u16::from_be_bytes([ack_data[2], ack_data[3]]);
+
+                        if ack_opcode != 4 || ack_block != 0 {
+                            log::warn!(
+                                "Invalid ACK for OACK from {}: opcode={}, block={}",
+                                peer,
+                                ack_opcode,
+                                ack_block
+                            );
+                            active_transfers.lock().await.remove(&peer);
+                            return;
+                        }
+                    } else {
+                        log::warn!("ACK packet too short from {}", peer);
+                        active_transfers.lock().await.remove(&peer);
+                        return;
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ACK channel closed for {}", peer);
+                    active_transfers.lock().await.remove(&peer);
+                    return;
+                }
+                Err(_) => {
+                    log::warn!("Timeout waiting for OACK ACK from {}", peer);
+                    active_transfers.lock().await.remove(&peer);
+                    return;
+                }
+            }
+        }
+
         // Send file in blocks
         let mut block_num = 1u16;
         let mut offset = 0;
 
         loop {
             let remaining = file_data.len() - offset;
-            let chunk_size = remaining.min(BLOCK_SIZE);
+            let chunk_size = remaining.min(block_size);
             let chunk = &file_data[offset..offset + chunk_size];
 
             let data_packet = TftpPacket::build_data(block_num, chunk);
@@ -239,8 +365,8 @@ impl TftpServer {
                             offset += chunk_size;
                             log::debug!("Received ACK for block {} of {}", block_num, filename);
 
-                            // If this was the last block (less than BLOCK_SIZE), we're done
-                            if chunk_size < BLOCK_SIZE {
+                            // If this was the last block (less than block_size), we're done
+                            if chunk_size < block_size {
                                 log::info!(
                                     "TFTP transfer complete: {} ({} bytes)",
                                     filename,

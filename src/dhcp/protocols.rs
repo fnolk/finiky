@@ -14,6 +14,23 @@ impl ProtocolHandler {
         config: &ProtocolConfig,
         client_arch: Option<u16>,
     ) -> Option<BootProtocol> {
+        // Check if protocol is forced in config
+        if let Some(ref forced) = config.force_protocol {
+            return match forced.to_lowercase().as_str() {
+                "efi" if config.efi => Some(BootProtocol::Efi),
+                "legacy" if config.legacy => Some(BootProtocol::Legacy),
+                "dhcp_boot" if config.dhcp_boot => Some(BootProtocol::DhcpBoot),
+                _ => {
+                    // If forced protocol is not valid or not enabled, fall back to auto-detection
+                    tracing::warn!(
+                        "Invalid or disabled forced protocol '{}', falling back to auto-detection",
+                        forced
+                    );
+                    None
+                }
+            };
+        }
+
         // Check client architecture option (option 93)
         if let Some(arch) = client_arch {
             match arch {
@@ -79,6 +96,7 @@ mod tests {
             boot_filename_efi: None,
             boot_filename_legacy: None,
             boot_filename_dhcp_boot: None,
+            force_protocol: None,
         };
 
         assert_eq!(
@@ -100,6 +118,7 @@ mod tests {
             boot_filename_efi: None,
             boot_filename_legacy: None,
             boot_filename_dhcp_boot: None,
+            force_protocol: None,
         };
 
         assert_eq!(
@@ -121,6 +140,7 @@ mod tests {
             boot_filename_efi: Some("custom_efi.efi".to_string()),
             boot_filename_legacy: Some("custom_legacy.0".to_string()),
             boot_filename_dhcp_boot: Some("custom_dhcp.0".to_string()),
+            force_protocol: None,
         };
 
         assert_eq!(
@@ -135,5 +155,67 @@ mod tests {
             ProtocolHandler::get_boot_filename(BootProtocol::DhcpBoot, &config),
             "custom_dhcp.0"
         );
+    }
+
+    #[test]
+    fn test_forced_protocol() {
+        // Test forcing EFI protocol
+        let config = ProtocolConfig {
+            efi: true,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot: None,
+            force_protocol: Some("efi".to_string()),
+        };
+        // Should return EFI even if client requests Legacy (arch 0)
+        assert_eq!(
+            ProtocolHandler::select_protocol(&config, Some(0)),
+            Some(BootProtocol::Efi)
+        );
+
+        // Test forcing Legacy protocol
+        let config = ProtocolConfig {
+            efi: true,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot: None,
+            force_protocol: Some("legacy".to_string()),
+        };
+        // Should return Legacy even if client requests EFI (arch 6)
+        assert_eq!(
+            ProtocolHandler::select_protocol(&config, Some(6)),
+            Some(BootProtocol::Legacy)
+        );
+
+        // Test forcing DhcpBoot protocol
+        let config = ProtocolConfig {
+            efi: true,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot: None,
+            force_protocol: Some("dhcp_boot".to_string()),
+        };
+        assert_eq!(
+            ProtocolHandler::select_protocol(&config, Some(6)),
+            Some(BootProtocol::DhcpBoot)
+        );
+
+        // Test forcing disabled protocol (should return None as fallback fails)
+        let config = ProtocolConfig {
+            efi: false,
+            legacy: true,
+            dhcp_boot: true,
+            boot_filename_efi: None,
+            boot_filename_legacy: None,
+            boot_filename_dhcp_boot: None,
+            force_protocol: Some("efi".to_string()),
+        };
+        assert_eq!(ProtocolHandler::select_protocol(&config, Some(0)), None);
     }
 }

@@ -60,6 +60,7 @@ fn test_protocol_handler() {
         boot_filename_efi: None,
         boot_filename_legacy: None,
         boot_filename_dhcp_boot: None,
+        force_protocol: None,
     };
 
     // Test EFI architecture
@@ -88,6 +89,7 @@ fn test_protocol_handler() {
         boot_filename_efi: None,
         boot_filename_legacy: None,
         boot_filename_dhcp_boot: None,
+        force_protocol: None,
     };
     assert_eq!(
         ProtocolHandler::select_protocol(&config_disabled, None),
@@ -106,6 +108,7 @@ fn test_boot_filename() {
         boot_filename_efi: None,
         boot_filename_legacy: None,
         boot_filename_dhcp_boot: None,
+        force_protocol: None,
     };
 
     assert_eq!(
@@ -133,6 +136,7 @@ fn test_boot_filename_custom() {
         boot_filename_efi: Some("custom_efi.efi".to_string()),
         boot_filename_legacy: Some("custom_legacy.0".to_string()),
         boot_filename_dhcp_boot: Some("custom_dhcp.0".to_string()),
+        force_protocol: None,
     };
 
     assert_eq!(

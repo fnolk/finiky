@@ -33,6 +33,9 @@ pub struct ProtocolConfig {
     pub boot_filename_legacy: Option<String>,
     #[serde(default)]
     pub boot_filename_dhcp_boot: Option<String>,
+    /// Force a specific protocol ("efi", "legacy", or "dhcp_boot") instead of auto-detection
+    #[serde(default)]
+    pub force_protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +63,7 @@ impl Default for Config {
                     boot_filename_efi: None,
                     boot_filename_legacy: None,
                     boot_filename_dhcp_boot: None,
+                    force_protocol: None,
                 },
                 ip_pool_start: "192.168.1.100".to_string(),
                 ip_pool_end: "192.168.1.200".to_string(),

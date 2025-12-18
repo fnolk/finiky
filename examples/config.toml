@@ -16,6 +16,8 @@ dhcp_boot = true
 # boot_filename_efi = "bootx64.efi"
 # boot_filename_legacy = "pxelinux.0"
 # boot_filename_dhcp_boot = "pxelinux.0"
+# Optional: force a specific protocol ("efi", "legacy", or "dhcp_boot") instead of auto-detection
+# force_protocol = "efi"
 
 [tftp]
 port = 69

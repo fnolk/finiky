@@ -71,6 +71,10 @@ enum Commands {
         /// Enable DHCP-boot protocol
         #[arg(long)]
         enable_dhcp_boot: Option<bool>,
+
+        /// Force a specific boot protocol (efi, legacy, or dhcp_boot), overrides auto-detection
+        #[arg(long)]
+        force_protocol: Option<String>,
     },
 }
 
@@ -109,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             enable_efi,
             enable_legacy,
             enable_dhcp_boot,
+            force_protocol,
         }) => {
             let mut config = if let Some(config_path) = config_path {
                 config::Config::from_file(&config_path)?
@@ -143,6 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(enabled) = enable_dhcp_boot {
                 config.dhcp.protocols.dhcp_boot = enabled;
+            }
+            if let Some(protocol) = force_protocol {
+                config.dhcp.protocols.force_protocol = Some(protocol);
             }
 
             server::Server::new(config)?.start().await?;

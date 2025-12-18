@@ -15,9 +15,6 @@ dhcp_boot = true
 # Optional: custom boot filenames (if not specified, defaults will be used)
 # boot_filename_efi = "bootx64.efi"
 # boot_filename_legacy = "pxelinux.0"
-# For dhcp_boot mode, you can specify different filenames for Legacy and EFI clients
-# boot_filename_dhcp_boot_legacy = "pxelinux.0"
-# boot_filename_dhcp_boot_efi = "syslinux.efi"
 # Optional: force a specific protocol ("efi", "legacy", or "dhcp_boot") instead of auto-detection
 # force_protocol = "efi"
 

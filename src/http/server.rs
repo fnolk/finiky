@@ -1,6 +1,6 @@
 use crate::filesystem::FileSystem;
 use axum::{
-    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -25,7 +25,7 @@ impl HttpServer {
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         let filesystem = Arc::clone(&self.filesystem);
         let app = Router::new()
-            .route("/*path", get(Self::handle_request))
+            .route("/{*path}", get(Self::handle_request))
             .with_state(filesystem);
 
         use std::net::SocketAddr;
@@ -39,10 +39,10 @@ impl HttpServer {
     }
 
     async fn handle_request(
-        uri: Uri,
+        axum::extract::Path(path): axum::extract::Path<String>,
         axum::extract::State(filesystem): axum::extract::State<Arc<dyn FileSystem>>,
     ) -> Response {
-        let path = uri.path().trim_start_matches('/');
+        let path = path.as_str();
 
         log::debug!("HTTP request for: {}", path);
 

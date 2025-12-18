@@ -14,6 +14,10 @@ const DEFAULT_CONFIG: &str = include_str!("../examples/config.toml");
 #[command(name = "finiky")]
 #[command(about = "PXE Server for rapid OS deployment to bare metal")]
 struct Cli {
+    /// Enable debug mode (use multiple times for more verbosity: -d = debug, -dd = trace)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    debug: u8,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -72,11 +76,21 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let cli = Cli::parse();
+
+    // Initialize logging based on debug flag count
+    let log_level = match cli.debug {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
+        )
+        .init();
 
     match cli.command {
         Some(Commands::GenConfig { file }) => {

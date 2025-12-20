@@ -33,7 +33,11 @@ impl HttpServer {
         log::info!("HTTP server listening on port {}", self.port);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -41,10 +45,11 @@ impl HttpServer {
     async fn handle_request(
         axum::extract::Path(path): axum::extract::Path<String>,
         axum::extract::State(filesystem): axum::extract::State<Arc<dyn FileSystem>>,
+        axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     ) -> Response {
         let path = path.as_str();
 
-        log::debug!("HTTP request for: {}", path);
+        log::debug!("HTTP request for: {} from {}", path, addr);
 
         if filesystem.exists(path).await {
             match filesystem.read_file(path).await {
@@ -56,6 +61,13 @@ impl HttpServer {
                         header::CONTENT_LENGTH,
                         HeaderValue::from_str(&data.len().to_string())
                             .unwrap_or(HeaderValue::from_static("0")),
+                    );
+                    log::info!(
+                        "HTTP serving file: {} ({} bytes, content-type: {}) to {}",
+                        path,
+                        data.len(),
+                        content_type,
+                        addr
                     );
                     (StatusCode::OK, headers, Bytes::from(data)).into_response()
                 }

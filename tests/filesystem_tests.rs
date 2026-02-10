@@ -76,6 +76,13 @@ async fn test_tar_filesystem_directory() {
     let encoder = GzEncoder::new(file, Compression::default());
     let mut tar = Builder::new(encoder);
 
+    // Add a top-level file to prevent strip_root_directory from stripping "dir"
+    let mut header = tar::Header::new_gnu();
+    header.set_path("root.txt").unwrap();
+    header.set_size(4);
+    header.set_cksum();
+    tar.append(&header, &b"root"[..]).unwrap();
+
     let mut header = tar::Header::new_gnu();
     header.set_path("dir/").unwrap();
     header.set_entry_type(tar::EntryType::Directory);
@@ -93,6 +100,7 @@ async fn test_tar_filesystem_directory() {
 
     let fs = TarFileSystem::new(&tar_path).unwrap();
     assert!(fs.exists("dir/").await);
+    assert!(fs.exists("dir").await);
     let entries = fs.list_dir("dir").await.unwrap();
     assert!(entries.contains(&"file.txt".to_string()));
 }

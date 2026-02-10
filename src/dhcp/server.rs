@@ -163,6 +163,8 @@ impl IpPool {
     }
 
     fn allocate(&self, mac: [u8; 6]) -> Option<Ipv4Addr> {
+        // Lock both mutexes to ensure atomic allocation
+        // Lock leases first, then current to avoid deadlock
         let mut leases = self.leases.lock().unwrap();
 
         // Check if MAC already has a lease
@@ -170,11 +172,14 @@ impl IpPool {
             return Some(ip);
         }
 
-        // Allocate new IP
+        // Allocate new IP - need to lock current while holding leases lock
+        // to ensure atomic check-and-allocate operation
         let mut current = self.current.lock().unwrap();
         let mut candidate = *current;
+        let start_candidate = candidate;
 
         loop {
+            // Wrap around if we exceed the end
             if candidate > self.end {
                 candidate = self.start;
             }
@@ -182,7 +187,9 @@ impl IpPool {
             // Check if IP is already leased
             let is_leased = leases.values().any(|&ip| ip == candidate);
             if !is_leased {
-                *current = {
+                // Found available IP - atomically update current and assign lease
+                // Update current to next IP before assigning to avoid conflicts
+                let next_ip = {
                     let octets = candidate.octets();
                     let last = octets[3].wrapping_add(1);
                     if last == 0 {
@@ -191,10 +198,15 @@ impl IpPool {
                         Ipv4Addr::new(octets[0], octets[1], octets[2], last)
                     }
                 };
+
+                // Update current pointer first, then assign lease
+                // This ensures next allocation starts from a different IP
+                *current = next_ip;
                 leases.insert(mac, candidate);
                 return Some(candidate);
             }
 
+            // IP is leased, try next one
             let octets = candidate.octets();
             let last = octets[3].wrapping_add(1);
             candidate = if last == 0 {
@@ -203,7 +215,8 @@ impl IpPool {
                 Ipv4Addr::new(octets[0], octets[1], octets[2], last)
             };
 
-            if candidate == *current {
+            // If we've wrapped around to where we started, pool is exhausted
+            if candidate == start_candidate {
                 return None; // Pool exhausted
             }
         }
@@ -433,5 +446,31 @@ mod tests {
 
         let ip1_again = pool.allocate(mac1).unwrap();
         assert_eq!(ip1_again, ip1); // Same MAC gets same IP
+    }
+
+    #[test]
+    fn test_ip_pool_multiple_clients() {
+        let start = "192.168.1.100".parse().unwrap();
+        let end = "192.168.1.110".parse().unwrap();
+        let pool = IpPool::new(start, end);
+
+        // Allocate IPs for multiple different MAC addresses
+        let mac1 = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+        let mac2 = [0x00, 0x11, 0x22, 0x33, 0x44, 0x56];
+        let mac3 = [0x00, 0x11, 0x22, 0x33, 0x44, 0x57];
+
+        let ip1 = pool.allocate(mac1).unwrap();
+        let ip2 = pool.allocate(mac2).unwrap();
+        let ip3 = pool.allocate(mac3).unwrap();
+
+        // Each MAC should get a different IP
+        assert_eq!(ip1, start);
+        assert_eq!(ip2, "192.168.1.101".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(ip3, "192.168.1.102".parse::<Ipv4Addr>().unwrap());
+
+        // Same MACs should get the same IPs again
+        assert_eq!(pool.allocate(mac1).unwrap(), ip1);
+        assert_eq!(pool.allocate(mac2).unwrap(), ip2);
+        assert_eq!(pool.allocate(mac3).unwrap(), ip3);
     }
 }

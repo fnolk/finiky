@@ -187,7 +187,30 @@ impl FileSystem for TarFileSystem {
 
     async fn exists(&self, path: &str) -> bool {
         let normalized = self.normalize_path(path);
-        self.entries.contains_key(&normalized)
+
+        // Direct match (files or directory entries with trailing /)
+        if self.entries.contains_key(&normalized) {
+            return true;
+        }
+
+        // Directory match: check both with and without trailing /
+        let dir_key = if normalized.ends_with('/') {
+            normalized.trim_end_matches('/').to_string()
+        } else {
+            format!("{}/", normalized)
+        };
+
+        if self.entries.contains_key(&dir_key) {
+            return true;
+        }
+
+        // Implicit directory: exists if any entry has this as a prefix
+        let prefix = if normalized.ends_with('/') {
+            normalized
+        } else {
+            format!("{}/", normalized)
+        };
+        self.entries.keys().any(|k| k.starts_with(&prefix))
     }
 
     async fn list_dir(&self, path: &str) -> Result<Vec<String>, FileSystemError> {
